@@ -12,9 +12,15 @@ from _TaskStatus import _TaskStatus
 #########################################################################################################
 #########################################################################################################
 #####  Pool Wrapper (Private)                                                                       #####
+#### - This class is used to wrap the ProcessPoolExecutor and manage the tasks and users assigned to it #
 #########################################################################################################
 #########################################################################################################
 class _PoolWrapper():
+
+    #########################################################################################################
+    #####  Initilization and Get ID                                                                     #####
+    #########################################################################################################
+
     def __init__(self, pool_type: PoolType, num_workers: int) -> None:
         self.pool: ProcessPoolExecutor = ProcessPoolExecutor(max_workers=num_workers)
         self.pool_id: UUID = uuid4() 
@@ -29,6 +35,7 @@ class _PoolWrapper():
     #########################################################################################################
     #####  User Management                                                                              #####
     #########################################################################################################
+    
     def add_user(self, user_id: str) -> None:
         self.queue_manager.add_user(user_id)
 
@@ -37,15 +44,11 @@ class _PoolWrapper():
 
     def get_user_count(self) -> int:
         return self.queue_manager.get_user_count()
-    #########################################################################################################
-    #####  Utilization Management                                                                       #####
-    #########################################################################################################
-    # def get_utilization(self) -> float:
-    #     return self.queue_manager.pool_utilization.get_utilization()
     
     #########################################################################################################
     #####  Task Completion                                                                              #####
     #########################################################################################################
+   
     def shared_callback(self, future: EnhancedFuture, task_id: UUID) -> None:
         if future.exception():
             print(f"Task {task_id} failed with error: {future.exception}")
@@ -53,8 +56,9 @@ class _PoolWrapper():
         self._try_start_new_task()
    
     #########################################################################################################
-    #####  Task Run Logic                                                                               #####
+    #####  Sync, Async Task Run Logic                                                                   #####
     #########################################################################################################
+  
     async def run_sync_task(self, func: Callable, *args, **kwds) -> Any:
         try:
             return await self.event_loop.run_in_executor(self.pool, partial(func, *args, **kwds))
@@ -82,6 +86,10 @@ class _PoolWrapper():
                                                      partial(self._run_async_in_executor, 
                                                              func, *args, **kwds))
     
+    #########################################################################################################
+    #####  Add Tasks to Queue and Start New Tasks                                                       #####
+    #########################################################################################################
+
     def _try_start_new_task(self) -> None:
         if not self.queue_manager.has_idle_workers() or not self.queue_manager.has_pending_tasks():
             return
@@ -142,9 +150,10 @@ class _PoolWrapper():
         return task.task_id  #will likely return before task is even added to pool due to run_in_executor
     
     #########################################################################################################
-    #####  Add Tasks & Batches to Pool Helpers                                                          #####
+    #####  Add Tasks & Batches to Pool and Waiters                                                      #####
     #TODO: Add _add_batch_tasks method / chunksize: might not be possible because no map function in asyncio and might not help since tasks are variable length
     #########################################################################################################
+    
     async def add_task_and_wait(self, task: PoolTask) -> Any:
         task_id: UUID = self._add_task(task)
         result: Any = await self.get_task_result(task_id)
@@ -163,6 +172,10 @@ class _PoolWrapper():
         task_ids: List[UUID] = [self._add_task(task) for task in tasks]
         return [(task_id, self.queue_manager.get_task_future(task_id) )for task_id in task_ids]
 
+    #########################################################################################################
+    #####  Await Task Future and Get Futures                                                            #####
+    #########################################################################################################
+
     async def get_task_result(self, task_id: UUID) -> Any:
         if task_id not in self.queue_manager.task_futures:
             raise ValueError(f"Task {task_id} not found in pool {self.pool_id}")
@@ -170,6 +183,10 @@ class _PoolWrapper():
 
     def get_all_pending_and_running_tasks(self) -> ItemsView[UUID, EnhancedFuture]:
         return self.queue_manager.get_all_futures()
+
+    #########################################################################################################
+    #####  Utilization, Worker, and Task Count Getters                                                  #####
+    #########################################################################################################
 
     def get_utilization(self) -> float:
         return self.queue_manager.get_utilization()
@@ -199,16 +216,22 @@ class _PoolWrapper():
     #########################################################################################################
     #####  Determine Task Cost                                                                      #####
     #########################################################################################################
+    
     def get_task_cost(self) -> float:
         #TODO Implement
         return 1.0
      
 
     #########################################################################################################
-    #####  Shutdown Pool MEthod                                                                          #####
+    #####  Shutdown Pool                                                                                #####
     #########################################################################################################
+
     def terminate(self) -> None:
         self.pool.shutdown(wait=True)
+
+    #########################################################################################################
+    #####  To String                                                                                    #####
+    #########################################################################################################
     
     def __str__(self) -> str:
         return f"Pool ID: {self.pool_id}"
