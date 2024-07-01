@@ -5,8 +5,19 @@ from uuid import UUID, uuid4
 import time
 from _ProcessPoolUser import _ProcessPoolUser
 
-
+#########################################################################################################
+#########################################################################################################
+#####  PoolTask (Public)
+#### -  This class is used to define a task that will be executed by the dynamic process pool
+#########################################################################################################
+#########################################################################################################
 class PoolTask:
+    
+    #########################################################################################################
+    #####  Initialization
+    #########################################################################################################
+    #TODO: change to setters/getters
+
     def __init__(self, user_id: str, pool_type: PoolType, cost: Optional[float], func: Callable, callback: Optional[Callable], *args, **kwds) -> None:
         # self.task_id: UUID = task_id
         self.user_id: str = user_id
@@ -24,9 +35,17 @@ class PoolTask:
         self.start_time: Optional[float] = None
         self.end_time: Optional[float] = None
     
+    #########################################################################################################
+    #####  Cost Default Getter (for Casting)
+    #########################################################################################################
+    
     def get_cost(self) -> float:
         return self.cost if self.cost is not None else 0
 
+    #########################################################################################################
+    #####  Timers
+    #########################################################################################################
+    
     def get_running_time(self) -> Optional[float]:
         if self.end_time is None:
             return None
@@ -42,6 +61,11 @@ class PoolTask:
     def set_end_time(self) -> None:
         self.end_time = time.time()
 
+
+    #########################################################################################################
+    #####  To String
+    #########################################################################################################
+    
     def __str__(self) -> str:
         # return f"Task ID: {self.task_id} User ID: {self.user_id} Pool ID: {self.pool_id} Cost: {self.cost} Func: {self.func} Args: {self.args} Kwds: {self.kwds}"
         return ""

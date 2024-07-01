@@ -1,6 +1,17 @@
 from _TaskStatus import _TaskStatus
 
+
+    #########################################################################################################
+    #########################################################################################################
+    #####  _PoolUtilization (Private)
+    #### - This class is used to mantain the pending and active cost utilization and workers of a pool
+    #########################################################################################################
+    #########################################################################################################
 class _PoolUtilization:
+    #########################################################################################################
+    ##### Initialization
+    #########################################################################################################
+
     def __init__(self, workers: int) -> None:
 
         self.pending_utilization: float = 0
@@ -9,6 +20,9 @@ class _PoolUtilization:
         self.workers: int = workers
         self.active_workers: int = 0
     
+    #########################################################################################################
+    ##### Utilization Change
+    #########################################################################################################
 
     def process_changed(self, cost, task_status: _TaskStatus) -> None:
         if task_status == _TaskStatus.PENDING:
@@ -21,6 +35,10 @@ class _PoolUtilization:
             self.active_utilization -= cost
             self.active_workers -= 1
 
+    #########################################################################################################
+    ##### Getters
+    #########################################################################################################
+
     def get_pending_utilization(self) -> float:
         return self.pending_utilization
     
@@ -30,9 +48,6 @@ class _PoolUtilization:
     def get_utilization(self) -> float:
         return self.active_utilization + self.pending_utilization
 
-    def set_active_workers(self, workers: int) -> None:
-        self.active_workers = workers
-    
     def get_active_workers(self) -> int:
         return self.active_workers
 
@@ -44,4 +59,13 @@ class _PoolUtilization:
     
     def has_idle_workers(self) -> bool:
         return self.active_workers < self.workers
+
+
+    #########################################################################################################
+    ##### Setters
+    #########################################################################################################
+   
+    def set_active_workers(self, workers: int) -> None:
+        self.active_workers = workers
+    
 

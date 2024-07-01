@@ -10,6 +10,14 @@ from EnhancedFuture import EnhancedFuture
 from _TaskStatus import _TaskStatus
 
 
+
+    #########################################################################################################
+    #########################################################################################################
+    #####  _PoolTaskQueueAndManager (Private):
+    ##### - Manages the queue of tasks and the running tasks of the pool  ######
+    #########################################################################################################
+    #########################################################################################################
+
     # Tiebreaker: SJF and WSPT Scheduling (minimizing AVERAGE wait time) -> tasks are ran in order of submission for each user: TODO: add priority later?
     # (1) Choose user with less currently running tasks (prevent monopolization of WORKERS)
     # (2) choose user with least cost of task (improve system throughput) + (3) Choose user with longest wait time within epsilon (prevent starvation) (based on herustic)
@@ -18,9 +26,17 @@ from _TaskStatus import _TaskStatus
     # (6) Alphabetic order
 
 class _PoolTaskQueueAndManager: # not actually a queue
+    #########################################################################################################
+    #####  Constants
+    #########################################################################################################
+    
     MAXIMIM_QUEUE_SIZE: int = -1
     EPSILON_HEURISTIC: float = 2.0
 
+    #########################################################################################################
+    #####  Init
+    #########################################################################################################
+    
     def __init__(self, max_workers: int) -> None:
         self.pending_tasks: Dict[str, Queue[UUID]] = {} # user_id -> List[PoolTask], most effecient I can think of, List[] #TODO: convert to Queue
         self.running_tasks: Dict[str, Set[UUID]] = {} # user_id -> List[PoolTask]
@@ -31,6 +47,10 @@ class _PoolTaskQueueAndManager: # not actually a queue
         self.pool_utilization: _PoolUtilization = _PoolUtilization(max_workers)
         self.users: Set[str] = set()
 
+    #########################################################################################################
+    #####  Priority Heuristics
+    #########################################################################################################
+    
     def _wait_cost_heuristic(self, wait_time: float, wait_max: float, cost_of_task: float, cost_max: float) -> float:
         # change to exponential increase after waiting for more than half the cost, otherwise linear, all in one equation
         # assume cost is in seconds to run task
@@ -50,6 +70,10 @@ class _PoolTaskQueueAndManager: # not actually a queue
         cost_score: float = COST_WEIGHT * math.log10(cost_max / (cost_of_task + math.pow(10, -2)) + 1)
         score: float = wait_score + cost_score
         return score
+    
+    #########################################################################################################
+    #####  Task Priority Helper Functons
+    #########################################################################################################
     
     def _get_worker_usage(self, user_id: str) -> int:
         return len(self.running_tasks[user_id]) if user_id in self.running_tasks else 0
@@ -74,6 +98,10 @@ class _PoolTaskQueueAndManager: # not actually a queue
                 max_cost = self.tasks[task_id].get_cost()
         return max_cost
     
+    #########################################################################################################
+    #####  Priority Queue Pop Next Task
+    #########################################################################################################
+   
     def pop_next_task(self, last_finisher: Optional[str] = None) -> Optional[UUID]:
         if len(self.pending_tasks) == 0:
             return None
@@ -126,20 +154,22 @@ class _PoolTaskQueueAndManager: # not actually a queue
         
         return next_task.task_id
     
+    #########################################################################################################
+    #####  Add Task to Queue
+    #########################################################################################################
+   
     def add_task(self, task: PoolTask) -> None:
         self.tasks[task.task_id] = task
         if task.user_id not in self.pending_tasks:
             self.pending_tasks[task.user_id] = Queue(maxsize=0)
         self.pending_tasks[task.user_id].put_nowait(task.task_id)
         self.pool_utilization.process_changed(task.get_cost(), _TaskStatus.PENDING)
-        
-    def has_idle_workers(self) -> bool:
-        return self.pool_utilization.has_idle_workers()
+     
+    #########################################################################################################
+    #####  Task Status Changers
+    #########################################################################################################
 
-    def has_pending_tasks(self) -> bool:
-        return len(self.pending_tasks) > 0
-
-    def set_task_running(self, task_id: UUID) -> None:
+    def _set_task_running(self, task_id: UUID) -> None:
         task: PoolTask = self.tasks[task_id]
         user_id: str = task.user_id
 
@@ -151,7 +181,7 @@ class _PoolTaskQueueAndManager: # not actually a queue
         self.running_tasks[user_id].add(task.task_id)
         self.pool_utilization.process_changed(task.get_cost(), _TaskStatus.RUNNING)
     
-    def set_task_finished(self, task_id) -> None:
+    def _set_task_finished(self, task_id: UUID) -> None:
         task_cost = self.tasks[task_id].get_cost()
         user_id: str = self.tasks[task_id].user_id
         self.tasks[task_id].set_end_time() #TODO: use elasped time?
@@ -164,6 +194,18 @@ class _PoolTaskQueueAndManager: # not actually a queue
             del self.running_tasks[user_id]
         self.pool_utilization.process_changed(task_cost, _TaskStatus.COMPLETED)
 
+    def set_task_status(self, task_id: UUID, status: _TaskStatus) -> None:
+        if status == _TaskStatus.RUNNING:
+            self._set_task_running(task_id)
+        elif status == _TaskStatus.COMPLETED:
+            self._set_task_finished(task_id)
+        else:
+            raise ValueError(f"Error Setting Task Status: {status} is not a valid task")
+
+    #########################################################################################################
+    #####  User Management Wrappers
+    #########################################################################################################
+    
     def add_user(self, user_id: str) -> None:
         self.users.add(user_id)
     
@@ -176,6 +218,10 @@ class _PoolTaskQueueAndManager: # not actually a queue
     def get_user_count (self) -> int:
         return len(self.users)
 
+    #########################################################################################################
+    #####  Get and Set Task Futures
+    #########################################################################################################
+
     def set_task_future(self, task_id: UUID, future: EnhancedFuture) -> None:
         self.task_futures[task_id] = future
     
@@ -184,7 +230,14 @@ class _PoolTaskQueueAndManager: # not actually a queue
 
     def get_all_futures(self) -> ItemsView[UUID, EnhancedFuture]:
         return self.task_futures.items()
-    
+     
+    #########################################################################################################
+    #####  Utilization Wrappers
+    #########################################################################################################
+
+    def get_worker_count(self) -> int:
+        return self.pool_utilization.get_workers()
+        
     def get_utilization(self) -> float:
         return self.pool_utilization.get_utilization()
     
@@ -194,6 +247,10 @@ class _PoolTaskQueueAndManager: # not actually a queue
     def get_active_utilization(self) -> float:
         return self.pool_utilization.get_active_utilization()
     
+    #########################################################################################################
+    #####  Task and Worker Count Getters
+    #########################################################################################################
+   
     def get_idle_workers(self) -> int:
         return self.pool_utilization.idle_workers()
 
@@ -206,6 +263,11 @@ class _PoolTaskQueueAndManager: # not actually a queue
     def get_task_count(self):
         return self.get_pending_task_count() + self.get_active_task_count()
     
-    def get_worker_count(self) -> int:
-        return self.pool_utilization.get_workers()
-        
+    def has_idle_workers(self) -> bool:
+        return self.pool_utilization.has_idle_workers()
+
+    def has_pending_tasks(self) -> bool:
+        return len(self.pending_tasks) > 0
+
+    def get_task(self, task_id: UUID) -> Optional[PoolTask]:
+        return self.tasks.get(task_id) 

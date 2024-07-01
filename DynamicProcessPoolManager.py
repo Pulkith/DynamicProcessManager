@@ -8,11 +8,26 @@ from _DynamicProcessPoolStateInstance import _DynamicProcessPoolStateInstance
 
 
 
+#########################################################################################################
+#########################################################################################################
+#####  DynamicProcessPoolManager (Public)
+#### -  This class is used to expose the API for the dynamic process pool manager
+#########################################################################################################
+#########################################################################################################
 class DynamicProcessPoolManager:
+
+    #########################################################################################################
+    #####  Initialization
+    #########################################################################################################
+    
     def __init__(self, config: DynamicPoolConfig) -> None:
         self._config = config
         self.pool_manager: _DynamicProcessPoolStateInstance = _DynamicProcessPoolStateInstance(self._config)
    
+    #########################################################################################################
+    #####  Single Tasks
+    #########################################################################################################
+  
     async def add_task(self, task: PoolTask) -> Tuple[UUID, EnhancedFuture]:
         return await self.pool_manager.add_task(task)
     
@@ -21,6 +36,10 @@ class DynamicProcessPoolManager:
         result: Any = await task_id_and_future[1]
         return result
     
+    #########################################################################################################
+    #####  Batch Tasks
+    #########################################################################################################
+
     async def add_batch_tasks(self, tasks: List[PoolTask]) -> List[Tuple[UUID, EnhancedFuture]]:
         if len(tasks) == 0:
             return []
@@ -40,12 +59,24 @@ class DynamicProcessPoolManager:
         results: List[Any] = await asyncio.gather(*[future[1] for future in ids_and_futures])
         return results
         
+    #########################################################################################################
+    #####  Shutdown
+    #########################################################################################################
+   
     async def close_all_pools(self) -> None:
         await self.pool_manager.terminate()
     
+    #########################################################################################################
+    #####  Wait on User Futures
+    #########################################################################################################
+   
     async def wait_on_all_futures_of_user(self, user_id: str) -> None:
         await self.pool_manager.wait_on_all_futures_of_user(user_id)
 
+    #########################################################################################################
+    #####  Context Manager
+    #########################################################################################################
+    
     def __enter__(self):
         return self
 

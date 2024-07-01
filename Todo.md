@@ -14,7 +14,7 @@
 #TODO: add pools of same type but different number of cores
 #TODO: for pool utilization, when choosing pool for first time, if user added a batch of tasks, take into account total sum of costs of tasks
 #TODO: for each pool calcluate the time the first task will finish (or ) the time a new user's task will start
-
+#TODO: Intefrate EnhancedFuture like cost, elasped_time, maintain other stuff?
 # TODO: fix calling with async functions not working
 
 #look at mp.queue, synch primitiave,s pipes

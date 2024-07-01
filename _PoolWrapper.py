@@ -7,11 +7,11 @@ from EnhancedFuture import EnhancedFuture
 from PoolTask import PoolTask
 from PoolType import PoolType
 from _PoolTaskQueueAndManager import _PoolTaskQueueAndManager
-
+from _TaskStatus import _TaskStatus
 
 #########################################################################################################
 #########################################################################################################
-#####  Pool Wrapper                                                                                 #####
+#####  Pool Wrapper (Private)                                                                       #####
 #########################################################################################################
 #########################################################################################################
 class _PoolWrapper():
@@ -90,9 +90,14 @@ class _PoolWrapper():
         if next_task_id is None:
             return
         assert next_task_id is not None
-        self.queue_manager.set_task_running(next_task_id)
+        self.queue_manager.set_task_status(next_task_id, _TaskStatus.RUNNING)
+        task_optional: Optional[PoolTask] = self.queue_manager.get_task(next_task_id)
+        assert task_optional is not None
+        task: PoolTask = task_optional
 
-        task: PoolTask = self.queue_manager.tasks[next_task_id]
+        assert task.user is not None
+        task.user.task_status_changed(self.pool_type, task.task_id, _TaskStatus.RUNNING)
+        
         future: EnhancedFuture = self.queue_manager.get_task_future(next_task_id)
 
         async def _task_wrapper() -> None:
@@ -109,8 +114,8 @@ class _PoolWrapper():
             assert task.user is not None
             result: Any = future.result() if not future.exception() else future.exception()
 
-            task.user.task_completed(self.pool_type, task.task_id)
-            self.queue_manager.set_task_finished(task.task_id)
+            task.user.task_status_changed(self.pool_type, task.task_id, _TaskStatus.COMPLETED)
+            self.queue_manager.set_task_status(task.task_id, _TaskStatus.COMPLETED)
 
             self.shared_callback(future, task.task_id)
             if task.callback is not None:
@@ -131,7 +136,7 @@ class _PoolWrapper():
         self.queue_manager.set_task_future(task.task_id, future)
         # future.set_cost(task.cost)
 
-        task.user.task_started(self.pool_type, task.task_id)
+        task.user.task_status_changed(self.pool_type, task.task_id, _TaskStatus.PENDING)
         self._try_start_new_task()
         
         return task.task_id  #will likely return before task is even added to pool due to run_in_executor

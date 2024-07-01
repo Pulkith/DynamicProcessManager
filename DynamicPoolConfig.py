@@ -2,6 +2,12 @@ from enum import Enum
 from typing import Any, Dict, List
 from PoolType import PoolType
 
+#########################################################################################################
+#########################################################################################################
+#####  _DynamicPoolConfig (Public)
+#### - This class is used to define the configuration of the pools 
+#########################################################################################################
+#########################################################################################################
 class DynamicPoolConfig:
     def __init__(self) -> None:
         self.config: dict[PoolType, dict[str, Any]] = {}
