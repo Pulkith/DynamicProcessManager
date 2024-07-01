@@ -15,6 +15,11 @@ class PoolType(Enum):
     HEAVY = 1 
     EXPRESS = 2
 
+class _TaskStatus(Enum):
+    PENDING = 1
+    RUNNING = 2
+    COMPLETED = 3
+
 class PoolTask:
     def __init__(self, user_id: str, pool_type: PoolType, cost: Optional[float], func: Callable, callback: Optional[Callable], *args, **kwds) -> None:
         # self.task_id: UUID = task_id
@@ -120,22 +125,33 @@ class _ProcessPoolUser:
 
 class _PoolUtilization:
     def __init__(self, workers: int) -> None:
-        self.utilization: float = 0
+
+        self.pending_utilization: float = 0
+        self.active_utilization: float = 0
+
         self.workers: int = workers
         self.active_workers: int = 0
     
-    def set_utilization(self, utilization: float) -> None:
-        self.utilization = utilization
 
-    def process_changed(self, cost_change: float) -> None:
-        if cost_change < 0:
-            self.active_workers -= 1
-        else:
+    def process_changed(self, cost, _TaskStatus) -> None:
+        if _TaskStatus == _TaskStatus.PENDING:
+            self.pending_utilization += cost
+        elif _TaskStatus == _TaskStatus.RUNNING:
+            self.pending_utilization -= cost
+            self.active_utilization += cost
             self.active_workers += 1
-        self.utilization += cost_change
+        elif _TaskStatus == _TaskStatus.COMPLETED:
+            self.active_utilization -= cost
+            self.active_workers -= 1
+
+    def get_pending_utilization(self) -> float:
+        return self.pending_utilization
+    
+    def get_active_utilization(self) -> float:
+        return self.active_utilization
     
     def get_utilization(self) -> float:
-        return self.utilization
+        return self.active_utilization + self.pending_utilization
 
     def set_active_workers(self, workers: int) -> None:
         self.active_workers = workers
@@ -324,6 +340,7 @@ class _PoolTaskQueueAndManager: # not actually a queue
         if task.user_id not in self.pending_tasks:
             self.pending_tasks[task.user_id] = Queue(maxsize=0)
         self.pending_tasks[task.user_id].put_nowait(task.task_id)
+        self.pool_utilization.process_changed(task.get_cost(), _TaskStatus.PENDING)
         
     def has_idle_workers(self) -> bool:
         return self.pool_utilization.has_idle_workers()
@@ -341,7 +358,7 @@ class _PoolTaskQueueAndManager: # not actually a queue
         task.set_start_time()
         
         self.running_tasks[user_id].add(task.task_id)
-        self.pool_utilization.process_changed(task.get_cost())
+        self.pool_utilization.process_changed(task.get_cost(), _TaskStatus.RUNNING)
     
     def set_task_finished(self, task_id) -> None:
         task_cost = self.tasks[task_id].get_cost()
@@ -354,7 +371,7 @@ class _PoolTaskQueueAndManager: # not actually a queue
 
         if len(self.running_tasks[user_id]) == 0:
             del self.running_tasks[user_id]
-        self.pool_utilization.process_changed(-task_cost)
+        self.pool_utilization.process_changed(task_cost, _TaskStatus.COMPLETED)
 
     def add_user(self, user_id: str) -> None:
         self.users.add(user_id)
@@ -377,6 +394,30 @@ class _PoolTaskQueueAndManager: # not actually a queue
     def get_all_futures(self) -> ItemsView[UUID, EnhancedFuture]:
         return self.task_futures.items()
     
+    def get_utilization(self) -> float:
+        return self.pool_utilization.get_utilization()
+    
+    def get_pending_utilization(self) -> float:
+        return self.pool_utilization.get_pending_utilization()
+
+    def get_active_utilization(self) -> float:
+        return self.pool_utilization.get_active_utilization()
+    
+    def get_idle_workers(self) -> int:
+        return self.pool_utilization.idle_workers()
+
+    def get_pending_task_count(self) -> int:
+        return sum([self.pending_tasks[user_id].qsize() for user_id in self.pending_tasks.keys()])
+    
+    def get_active_task_count(self) -> int:
+        return sum([len(self.running_tasks[user_id]) for user_id in self.running_tasks.keys()])
+    
+    def get_task_count(self):
+        return self.get_pending_task_count() + self.get_active_task_count()
+    
+    def get_worker_count(self) -> int:
+        return self.pool_utilization.get_workers()
+        
 
 #########################################################################################################
 #########################################################################################################
@@ -409,11 +450,8 @@ class _PoolWrapper():
     #########################################################################################################
     #####  Utilization Management                                                                       #####
     #########################################################################################################
-    def get_utilization(self) -> float:
-        return self.queue_manager.pool_utilization.get_utilization()
-
-    def set_utilization(self, utilization: float) -> None:
-        self.queue_manager.pool_utilization.set_utilization(utilization)
+    # def get_utilization(self) -> float:
+    #     return self.queue_manager.pool_utilization.get_utilization()
     
     #########################################################################################################
     #####  Task Completion                                                                              #####
@@ -537,6 +575,30 @@ class _PoolWrapper():
 
     def get_all_pending_and_running_tasks(self) -> ItemsView[UUID, EnhancedFuture]:
         return self.queue_manager.get_all_futures()
+
+    def get_utilization(self) -> float:
+        return self.queue_manager.get_utilization()
+
+    def get_pending_utilization(self) -> float:
+        return self.queue_manager.get_pending_utilization()
+    
+    def get_active_utilization(self) -> float:
+        return self.queue_manager.get_active_utilization()
+    
+    def get_idle_workers(self) -> int:
+        return self.queue_manager.pool_utilization.idle_workers()
+
+    def get_pending_tasks_count(self) -> int:
+        return self.queue_manager.get_pending_task_count()
+    
+    def get_active_tasks_count(self) -> int:
+        return self.queue_manager.get_active_task_count()
+    
+    def get_task_count(self) -> int:
+        return self.queue_manager.get_task_count()
+    
+    def get_worker_count(self) -> int:
+        return self.queue_manager.get_worker_count()
 
 
     #########################################################################################################
@@ -683,22 +745,55 @@ class _DynamicProcessPoolStateInstance:
             self.pools[cur_pool].remove_user(user_id)
         await self._assign_user_to_pool(user_id, pool_type, best_pool)
 
+    # Tiebreaker:
+    # (1) Choose pool with most idle workers (prevent underutilization)
+    # (2) Choose pool with least cost of active + pending tasks #TODO: update to which pool will have an idle worker first??
+    # (3) Choose pool with least users
+    # (4) Choose pool with least number of pending tasks
+    # (5) Choose arbitrary 
     async def _get_least_utilized_pool_of_type(self, type: PoolType) -> UUID:
         pool_ids: List[UUID] = self.pool_of_type_mapping.get_all_pool_of_type(type)
-        least_utilized_pool: Optional[_PoolWrapper] = None
+        assert len(pool_ids) > 0
+        least_utilized_pool_id: UUID = pool_ids[0]
+
+        def current_pool_is_worse(current_pool_id:UUID, compare_pool_id: UUID) -> bool:
+            current_pool: _PoolWrapper = self.pools[current_pool_id]
+            compare_pool: _PoolWrapper = self.pools[compare_pool_id]
+
+            current_pool_workers: int = current_pool.get_worker_count()
+            compare_pool_workers: int = compare_pool.get_worker_count()
+
+            current_pool_idle_workers: float = current_pool.get_idle_workers() / current_pool_workers
+            compare_pool_idle_workers: float = compare_pool.get_idle_workers() / compare_pool_workers
+
+            if compare_pool_idle_workers != current_pool_idle_workers: #higher percentage of idle workers
+                return compare_pool_idle_workers > current_pool_idle_workers
+
+            current_pool_utilization: float = current_pool.get_utilization() / current_pool_workers
+            compare_pool_utilization: float = compare_pool.get_utilization() / compare_pool_workers
+            
+            if compare_pool_utilization != current_pool_utilization: #lower utilization 
+                return compare_pool_utilization < current_pool_utilization
+            
+            current_pool_user_count: float = current_pool.get_user_count() / current_pool_workers
+            compare_pool_user_count: float = compare_pool.get_user_count() / compare_pool_workers
+
+            if compare_pool_user_count != current_pool_user_count: #lower user count
+                return compare_pool_user_count < current_pool_user_count
+            
+            current_pool_pending_tasks: float = current_pool.get_pending_tasks_count() / current_pool_workers #since we know pool is not idle
+            compare_pool_pending_tasks: float = compare_pool.get_pending_tasks_count() / compare_pool_workers
+
+            if compare_pool_pending_tasks != current_pool_pending_tasks: #lower pending tasks
+                return compare_pool_pending_tasks < current_pool_pending_tasks
+            
+            return compare_pool.get_pool_id() < current_pool.get_pool_id() #arbitrary tiebreaker
 
         for pool_id in pool_ids:
-            pool: _PoolWrapper = self.pools[pool_id]
-            if least_utilized_pool is None:
-                least_utilized_pool = pool
-            elif pool.get_utilization() < least_utilized_pool.get_utilization():
-                least_utilized_pool = pool
-            elif pool.get_utilization() == least_utilized_pool.get_utilization():
-                if pool.get_user_count() < least_utilized_pool.get_user_count():
-                    least_utilized_pool = pool
+            if current_pool_is_worse(least_utilized_pool_id, pool_id):
+                least_utilized_pool_id = pool_id
         
-        assert least_utilized_pool is not None
-        return least_utilized_pool.get_pool_id()
+        return least_utilized_pool_id
     
     def _get_all_active_futures(self) -> List[EnhancedFuture]:
         all_futures: List[EnhancedFuture] = []
@@ -804,7 +899,7 @@ async def main() -> None:
 
     await manager.add_task(PoolTask("user3", PoolType.HEAVY, None, example_sync_task, None, 3))
     await manager.add_task(PoolTask("user3", PoolType.HEAVY, None, example_sync_task, None, 3))
-    
+
     await manager.add_task(PoolTask("user4", PoolType.HEAVY, None, example_sync_task, None, 4))
 
     # await manager.add_task(PoolTask("user10", PoolType.EXPRESS, None, example_sync_task, None, 10))
@@ -830,11 +925,14 @@ if __name__ == '__main__':
 #TODO: asyncio.lock?
 #TODO: use libraru for utilization instead of cost or combine both?
 #TODO: thread safety
-#TODO: Add Large 3 line comments
-#TODO: change least-utiloized pool to be based on which pool has most idle workers -> which pool has an empty slot first -> which pool has the least amount of tasks running
-#TODO: prioritize shorter tasks frist??
 
-#Least-Utilized Pool Priority: min cost -> min users 
+#TODO: FINISH Comments
+
+
+#TODO: change least-utiloized pool to be based on which pool has most idle workers -> which pool has an empty slot first -> which pool has the least amount of tasks running
+#TODO: add pools of same type but different number of cores
+#TODO: for pool utilization, when choosing pool for first time, if user added a batch of tasks, take into account total sum of costs of tasks
+#TODO: for each pool calcluate the time the first task will finish (or ) the time a new user's task will start
 
 # TODO: fix calling with async functions not working
 
